@@ -10,8 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"time"
-
-	"github.com/CulturalProfessor/go-torrent/parseTorrent" // Import the parsetorrent package
+	"github.com/CulturalProfessor/go-torrent/parseTorrent" 
 	bencode "github.com/jackpal/bencode-go"
 )
 
@@ -47,6 +46,10 @@ func ExtractTrackerURL(peerID [20]byte, port uint16, torrentData parseTorrent.Be
 	if err != nil {
 		return "", fmt.Errorf("error parsing announce URL: %v", err)
 	}
+
+	// Remove the port from the base URL if it is present
+	base.Host = base.Hostname()
+
 	params := url.Values{
 		"info_hash":  []string{string(infoHash[:])},
 		"peer_id":    []string{string(peerID[:])},
@@ -56,8 +59,37 @@ func ExtractTrackerURL(peerID [20]byte, port uint16, torrentData parseTorrent.Be
 		"compact":    []string{"1"},
 		"left":       []string{strconv.Itoa(length)},
 	}
+
+	// Attempt HTTPS connection first
+	base.Scheme = "https"
 	base.RawQuery = params.Encode()
-	return base.String(), nil
+	httpsURL := base.String()
+
+	client := &http.Client{
+		Timeout: 10 * time.Second, // Set timeout to 10 seconds
+	}
+	resp, err := client.Get(httpsURL)
+	if err == nil && resp.StatusCode == http.StatusOK {
+		defer resp.Body.Close()
+		return httpsURL, nil
+	}
+
+	// Fall back to HTTP if HTTPS failed
+	base.Scheme = "http"
+	base.RawQuery = params.Encode()
+	httpURL := base.String()
+
+	resp, err = http.Get(httpURL)
+	if err != nil {
+		return "", fmt.Errorf("both HTTPS and HTTP requests failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("tracker did not return 200 OK: %v", resp.Status)
+	}
+
+	return httpURL, nil
 }
 
 func hashInfo(info parseTorrent.BencodeInfo) ([20]byte, error) {
