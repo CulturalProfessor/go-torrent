@@ -2,21 +2,51 @@ package peers
 
 import (
 	"bytes"
+	// "context"
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
-	"github.com/CulturalProfessor/go-torrent/parseTorrent" 
+
+	"github.com/CulturalProfessor/go-torrent/metainfo"
+	"github.com/CulturalProfessor/go-torrent/parseTorrent"
+	udptracker "github.com/CulturalProfessor/go-torrent/trackers"
 	bencode "github.com/jackpal/bencode-go"
 )
 
 type Peer struct {
 	IP   [4]byte
 	Port uint16
+}
+
+type TrackerResponse struct {
+	Interval int    `bencode:"interval"`
+	Peers    string `bencode:"peers"`
+}
+
+type AnnounceRequest struct {
+	InfoHash metainfo.Hash // Required
+	PeerID   metainfo.Hash // Required
+
+	Uploaded   int64  // Required, but default: 0, which should be only used for test or first.
+	Downloaded int64  // Required, but default: 0, which should be only used for test or first.
+	Left       int64  // Required, but default: 0, which should be only used for test or last.
+	Event      uint32 // Required, but default: 0
+
+	IP      net.IP // Optional
+	Key     int32  // Optional
+	NumWant int32  // Optional
+	Port    uint16 // Optional
+}
+
+type tclient struct {
+	url  string
+	udp  *udptracker.Client
+	exts []udptracker.Extension
 }
 
 func UnmarshalPeers(response []byte) []Peer {
@@ -33,8 +63,7 @@ func UnmarshalPeers(response []byte) []Peer {
 	return peers
 }
 
-func ExtractTrackerURL(peerID [20]byte, port uint16, torrentData parseTorrent.BencodeTorrent) (string, error) {
-	announce := torrentData.Announce
+func (c *tclient) ExtractTrackerURL(announce string, peerID [20]byte, port uint16, torrentData parseTorrent.BencodeTorrent) (string, error) {
 	length := torrentData.Info.Length
 	infoHash, err := hashInfo(torrentData.Info)
 
@@ -59,37 +88,55 @@ func ExtractTrackerURL(peerID [20]byte, port uint16, torrentData parseTorrent.Be
 		"compact":    []string{"1"},
 		"left":       []string{strconv.Itoa(length)},
 	}
+	if base.Scheme == "udp" {
+		// udpAnnounceResponse := udptracker.Announce(context.Background(), udptracker.AnnounceRequest{
+		// 	InfoHash:   metainfo.NewHash(infoHash[:]),
+		// 	PeerID:     metainfo.NewHash(peerID[:]),
+		// 	Downloaded: 0,
+		// 	Left:       int64(torrentData.Info.Length),
+		// 	Uploaded:   0,
 
-	// Attempt HTTPS connection first
-	base.Scheme = "https"
-	base.RawQuery = params.Encode()
-	httpsURL := base.String()
+		// 	Event: 0,
 
-	client := &http.Client{
-		Timeout: 10 * time.Second, // Set timeout to 10 seconds
-	}
-	resp, err := client.Get(httpsURL)
-	if err == nil && resp.StatusCode == http.StatusOK {
+		// 	Key:     0,
+		// 	NumWant: -1,
+		// 	Port:    port,
+		// })
+
+		return "", fmt.Errorf("UDP trackers are not supported")
+	} else {
+		// Attempt HTTPS connection first
+		base.Scheme = "https"
+		base.RawQuery = params.Encode()
+		httpsURL := base.String()
+
+		client := &http.Client{
+			Timeout: 10 * time.Second, // Set timeout to 10 seconds
+		}
+		resp, err := client.Get(httpsURL)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			defer resp.Body.Close()
+			return httpsURL, nil
+		}
+
+		// Fall back to HTTP if HTTPS failed
+		base.Scheme = "http"
+		base.RawQuery = params.Encode()
+		httpURL := base.String()
+
+		resp, err = client.Get(httpURL)
+		if err != nil {
+			return "", fmt.Errorf("both HTTPS and HTTP requests failed: %v", err)
+		}
 		defer resp.Body.Close()
-		return httpsURL, nil
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("tracker did not return 200 OK: %v", resp.Status)
+		}
+
+		return httpURL, nil
 	}
 
-	// Fall back to HTTP if HTTPS failed
-	base.Scheme = "http"
-	base.RawQuery = params.Encode()
-	httpURL := base.String()
-
-	resp, err = http.Get(httpURL)
-	if err != nil {
-		return "", fmt.Errorf("both HTTPS and HTTP requests failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("tracker did not return 200 OK: %v", resp.Status)
-	}
-
-	return httpURL, nil
 }
 
 func hashInfo(info parseTorrent.BencodeInfo) ([20]byte, error) {
@@ -101,37 +148,69 @@ func hashInfo(info parseTorrent.BencodeInfo) ([20]byte, error) {
 	return sha1.Sum(buf.Bytes()), nil
 }
 
-func RequestPeers(torrentData parseTorrent.BencodeTorrent) ([]Peer, error) {
-
-	peerID:=generatePeerID()
+func RequestPeers(torrentData parseTorrent.BencodeTorrent) ([]string, error) {
+	peerID := generatePeerID()
 	port := uint16(6881)
+	trackerURLs := append([]string{torrentData.Announce}, flattenAnnounceList(torrentData.AnnounceList)...)
 
-	trackerURL,err:= ExtractTrackerURL(peerID, port, torrentData)
-	fmt.Println(trackerURL)
-	if err != nil {
-		return nil, fmt.Errorf("error extracting tracker URL: %v", err)
+	var lastError error
+	var workingPeers []string
+
+	for _, trackerURL := range trackerURLs {
+		url, err := (&tclient{}).ExtractTrackerURL(trackerURL, peerID, port, torrentData)
+		fmt.Println("Trying tracker URL:", url)
+		if err != nil {
+			lastError = err
+			fmt.Println("Error extracting tracker URL:", err)
+			continue
+		}
+
+		client := &http.Client{
+			Timeout: 10 * time.Second, // Set timeout to 10 seconds
+		}
+
+		resp, err := client.Get(url)
+		if err != nil {
+			lastError = fmt.Errorf("error making GET request to tracker: %v", err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			lastError = fmt.Errorf("tracker did not return 200 OK: %v", resp.Status)
+			continue
+		}
+
+		var trackerResponse TrackerResponse
+		err = bencode.Unmarshal(resp.Body, &trackerResponse)
+		if err != nil {
+			lastError = fmt.Errorf("error decoding tracker response: %v", err)
+			continue
+		}
+
+		peers := UnmarshalPeers([]byte(trackerResponse.Peers))
+		for _, peer := range peers {
+			ip := net.IP(peer.IP[:]).String()
+			if net.ParseIP(ip) == nil {
+				continue // Skip invalid IPs
+			}
+			workingPeers = append(workingPeers, fmt.Sprintf("%s:%d", ip, peer.Port))
+		}
 	}
 
-	client := &http.Client{
-		Timeout: 10 * time.Second, // Set timeout to 10 seconds
+	if len(workingPeers) == 0 {
+		return nil, lastError
 	}
 
-	resp, err := client.Get(trackerURL)
-	if err != nil {
-		return nil, fmt.Errorf("error making GET request to tracker: %v", err)
-	}
-	defer resp.Body.Close()
+	return workingPeers, nil
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tracker did not return 200 OK: %v", resp.Status)
+func flattenAnnounceList(announceList [][]string) []string {
+	var result []string
+	for _, sublist := range announceList {
+		result = append(result, sublist...)
 	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading tracker response body: %v", err)
-	}
-
-	return UnmarshalPeers(body), err
+	return result
 }
 
 func generatePeerID() [20]byte {

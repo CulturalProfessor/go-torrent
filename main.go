@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-
+	"github.com/CulturalProfessor/go-torrent/download"
 	parseTorrent "github.com/CulturalProfessor/go-torrent/parseTorrent"
-	"github.com/CulturalProfessor/go-torrent/peers"
+	// "github.com/CulturalProfessor/go-torrent/peers"
 )
 
 func main() {
@@ -26,14 +26,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	os.WriteFile("torrentData.txt", []byte(fmt.Sprintf("%+v", torrentData.Info)), 0644)
-
-	peers, err := peers.RequestPeers(torrentData)
-	if err != nil {
-		fmt.Println("Error requesting peers")
-	}
-
-	for _, peer := range peers {
-		fmt.Println(peer)
-	}
+	download.DownloadFromPeer(torrentData)
 }
