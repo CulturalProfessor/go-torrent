@@ -53,9 +53,3 @@ Once the containers are up and running, open your browser and navigate to:
 
 - **Client (Next.js): http://localhost:3000 to access the web interface.**
 - **Server (Go): API available at http://localhost:8080.**
-
-### 🎉 Sample Torrent File
-
-For testing purposes, you can download a sample torrent file here:  
-📥 [Download Sample Torrent File](https://drive.google.com/uc?export=download&id=1At-GhxB_7PGoYAh7IsrTaEw63uiyRkJt)
-
