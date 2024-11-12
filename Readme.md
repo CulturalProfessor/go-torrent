@@ -4,6 +4,9 @@
 
 The **Go Torrent Project** is a web-based application that enables users to upload torrent files, monitor download progress, and download completed files. Built with a **Next.js client** 🌐 and a **Go server** 🐹, this project is containerized with Docker, making deployment simple and efficient across different environments.
 
+## Demo 🤖
+[Screencast from 12-11-24 11:02:19 PM IST.webm](https://github.com/user-attachments/assets/3b0e1dfb-a018-4d3f-ae75-74c5702e5fcb)
+
 ## 🚀 Features
 
 - **Upload Torrent Files**: Easily upload torrent files to start downloads.
