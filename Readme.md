@@ -57,5 +57,5 @@ Once the containers are up and running, open your browser and navigate to:
 ### 🎉 Sample Torrent File
 
 For testing purposes, you can download a sample torrent file here:  
-📥 [Download Sample Torrent File](https://drive.google.com/file/d/1At-GhxB_7PGoYAh7IsrTaEw63uiyRkJt/view?usp=sharing)
+📥 [Download Sample Torrent File](https://drive.google.com/uc?export=download&id=1At-GhxB_7PGoYAh7IsrTaEw63uiyRkJt)
 

@@ -67,7 +67,6 @@ export default function UploadPage() {
       <div className="max-w-lg bg-white rounded-lg shadow-lg p-8 text-center text-gray-800">
         <h1 className="text-3xl font-semibold mb-4 text-purple-700">Torrent Downloader</h1>
 
-        {/* Sample Torrent File Download Link */}
         <div className="mb-6">
           <a
             href="https://drive.google.com/uc?export=download&id=1At-GhxB_7PGoYAh7IsrTaEw63uiyRkJt"
